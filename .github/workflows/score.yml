@@ -17,9 +17,7 @@ concurrency:
 
 jobs:
   score:
-    # ENABLE: replace the next line by
-    #   if: contains(github.event.issue.labels.*.name, 'score-request')
-    if: false
+    if: contains(github.event.issue.labels.*.name, 'score-request')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
