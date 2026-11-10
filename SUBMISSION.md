@@ -78,3 +78,6 @@ per-circuit results.
 One scored submission per 24 hours, 10 in total, 3 per benchmark and 3 family bundles per identity per release. A refused
 submission does not count. The quota exists so that the key cannot be recovered by repeated
 queries; the threat model and numbers are in the spec.
+
+Quota used up: email the CSV to jamieson dit peter at gmail dit com (the maintainer). It is scored by hand with the same scorer
+and key, one line goes into the same ledger (input `email`), and the report comes back by email.

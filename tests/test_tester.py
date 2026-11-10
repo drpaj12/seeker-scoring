@@ -66,7 +66,8 @@ class WorkflowStatic(unittest.TestCase):
         assert m
         perms = dict(x.strip().split(": ") for x in m.group(1).splitlines())
         self.assertEqual(perms, {"issues": "write", "contents": "read"})
-        self.assertRegex(self.text, r"(?m)^    if: false$")
+        self.assertRegex(self.text,
+                         r"(?m)^    if: contains\(github\.event\.issue\.labels\.\*\.name, 'score-request'\)$")
         self.assertIn("group: score-ledger", self.text)
 
     def test_secret_only_via_env_and_gpg_stdin(self) -> None:
@@ -215,6 +216,25 @@ class DryRun(unittest.TestCase):
         self.assertEqual(p2.returncode, 0, p2.stderr)
         self.assertIn("retry in", (self.r / "gh_body.md").read_text())
         self.assertEqual(len(self.ledger_lines()), 1)
+        self.assertNotIn("jamieson dit peter", (self.r / "gh_body.md").read_text())
+
+    def test_quota_used_up_points_to_email(self) -> None:
+        work = self.r / "fill"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(work)], check=True,
+                       capture_output=True)
+        old = [json.dumps({"t": 0.0, "submitter": "alice", "release": REL, "unit": "cell",
+                           "benchmark": f"B{i}"}) for i in range(10)]
+        (work / "ledger.jsonl").write_text("\n".join(old) + "\n", encoding="utf-8")
+        for cmd in (["add", "ledger.jsonl"],
+                    ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "fill"],
+                    ["push", "-q", "origin", "HEAD"]):
+            subprocess.run(["git", "-C", str(work), *cmd], check=True, capture_output=True)
+        p = self.run_once(self.body())
+        self.assertEqual(p.returncode, 0, p.stderr)
+        text = (self.r / "gh_body.md").read_text()
+        self.assertIn("REFUSED: limit reached", text)
+        self.assertIn("jamieson dit peter at gmail dit com", text)
+        self.assertEqual(len(self.ledger_lines()), 10)
 
     def test_unknown_release_refused_without_key(self) -> None:
         p = self.run_once(self.body(release="seeker-evil-v9"))

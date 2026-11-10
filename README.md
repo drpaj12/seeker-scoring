@@ -10,7 +10,8 @@ comment; the issue then closes. The answer key stays private.
   `seeker-release` header of your CSV)
 
 Quotas per GitHub account and release: 1 scored submission per 24 hours, 10 in total,
-3 per benchmark, 3 family bundles. A refused submission does not count. GitHub limits an issue
+3 per benchmark, 3 family bundles. A refused submission does not count. No scored submissions left (quota used up)? Email your CSV to jamieson dit peter at gmail dit com and it is scored by hand.
+GitHub limits an issue
 body to 65,536 characters, so a family bundle is attached as a `.csv` or `.txt` file instead
 (one file, 8 MB at most; see [SUBMISSION.md](SUBMISSION.md)).
 
