@@ -19,9 +19,20 @@ Each benchmark package also holds a neutral stimulus that no Trojan reacts to.
 
 ## Where to submit
 
-Open an issue with the form `score-request` in https://github.com/drpaj12/seeker-scoring and paste the CSV. The
-report comes back as a comment and the issue closes. Downloads:
+Open an issue with the form `score-request` in https://github.com/drpaj12/seeker-scoring and paste the CSV, or
+drag the CSV file into the box (see "Large submissions"). The report comes back as a comment and the issue closes. Downloads:
 https://github.com/drpaj12/lemanrussIII/releases/tag/seeker-v2.0
+
+### Large submissions: attach the file
+
+A GitHub issue body holds at most 65,536 characters, so a family bundle (about 4,000 rows) does not fit.
+Drag a `.csv` or `.txt` file into the form box instead. The file holds exactly what you would paste (same
+`#` header lines, same columns). GitHub turns it into a link of the form
+`https://github.com/user-attachments/files/<digits>/<name>`. Rules: exactly one attachment; type `.csv` or
+`.txt`; UTF-8 text without NUL bytes; at most 8 MB (the scorer also refuses a file over 5 MiB). If the box also
+holds a pasted CSV, the pasted CSV is used. A second attachment, a link that is not a GitHub issue attachment,
+a file of the wrong type or size, or a failed download is refused with the reason; the issue closes and no quota
+is used. The attachment is downloaded without any credential.
 
 ## File format
 

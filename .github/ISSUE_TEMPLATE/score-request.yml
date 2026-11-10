@@ -8,13 +8,14 @@ body:
       value: |
         Quotas per GitHub account and release: 1 scored submission per 24 hours, 10 in total,
         3 per benchmark, 3 family bundles. A refused submission does not count.
-        Paste the CSV below (header lines, then `id,infected,score,count,locations`).
-        The issue body is limited to 65,536 characters by GitHub.
+        Paste the CSV below (header lines, then `id,infected,score,count,locations`), or drag the
+        `.csv` / `.txt` file into the box (one file, 8 MB at most). A family bundle is too long to
+        paste: GitHub limits an issue body to 65,536 characters, so attach the file.
   - type: textarea
     id: csv
     attributes:
       label: Submission CSV
-      description: "The full file, including the header lines that start with a hash sign."
+      description: "Paste the CSV (header lines that start with a hash sign, then the rows), or drag the file into this box."
       render: text
     validations:
       required: true
