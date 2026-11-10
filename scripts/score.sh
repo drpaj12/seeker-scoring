@@ -17,6 +17,7 @@ post() {  # post FILE: comment, close, lock
   gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY"
   gh issue lock "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY"
 }
+EMAIL_FALLBACK="jamieson dit peter at gmail dit com"
 refuse() {
   printf 'REFUSED: %s\n' "$1" > "$tmp/comment.md"
   post "$tmp/comment.md"
@@ -68,7 +69,13 @@ env -u SEEKER_KEY_PASS -u LEDGER_TOKEN PYTHONPATH="$root" python3 -m lemanruss.c
   --submitter "$SUBMITTER" --out-dir "$tmp/out" > "$tmp/stdout.txt" 2> "$tmp/stderr.txt" || rc=$?
 case "$rc" in
   0) ;;
-  2) cp "$tmp/stdout.txt" "$tmp/comment.md"; post "$tmp/comment.md"; exit 0 ;;
+  2) cp "$tmp/stdout.txt" "$tmp/comment.md"
+     if grep -q "^REFUSED: limit reached" "$tmp/comment.md"; then
+       printf '\nNo scored submissions left for this release on this account: email the CSV to %s\n' \
+         "$EMAIL_FALLBACK" >> "$tmp/comment.md"
+       printf 'and the maintainer scores it by hand with the same scorer and key.\n' >> "$tmp/comment.md"
+     fi
+     post "$tmp/comment.md"; exit 0 ;;
   *) echo "scorer failed with exit $rc" >&2; exit 1 ;;
 esac
 
