@@ -1,0 +1,20 @@
+name: Score a detector
+description: Submit a Seeker v2.0 detector output CSV for scoring (see SUBMISSION.md)
+title: "[score] "
+labels: ["score-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Quotas per GitHub account and release: 1 scored submission per 24 hours, 10 in total,
+        3 per benchmark, 3 family bundles. A refused submission does not count.
+        Paste the CSV below (header lines, then `id,infected,score,count,locations`).
+        The issue body is limited to 65,536 characters by GitHub.
+  - type: textarea
+    id: csv
+    attributes:
+      label: Submission CSV
+      description: "The full file, including the header lines that start with a hash sign."
+      render: text
+    validations:
+      required: true
