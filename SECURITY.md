@@ -10,6 +10,12 @@ How the workflow protects them:
   request is checked out or executed. The workflow runs the code on the default branch.
 - The issue body is data. It reaches `scripts/score.sh` through an environment variable and is
   parsed by a Python extractor; it is never interpolated into a shell line.
+- An attached submission is downloaded only from a link that fully matches
+  `https://github.com/user-attachments/files/<digits>/<name>.csv|.txt` (or the older
+  `https://github.com/<this repo>/files/<digits>/<name>`), by `curl` over https only with a redirect
+  limit, 8 MB cap and 60 s limit, with no credential and with the passphrase and tokens removed from
+  its environment. The file must be UTF-8 text without NUL bytes; it is then handled like a pasted body.
+  One link only; anything else is refused with a reason, the issue closes, and no quota is used.
 - Minimal permissions (`issues: write`, `contents: read`); one run at a time (concurrency group).
 - The key archive is decrypted with `gpg` reading the passphrase from standard input, unpacked
   under the runner temp directory, never printed, never uploaded as an artifact, and removed at
