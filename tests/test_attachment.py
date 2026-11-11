@@ -119,7 +119,7 @@ cp "$CURL_FILE" "$out"
 """
 
 
-class AttachmentDryRun(tt.DryRun):
+class AttachPlumbing(tt.LocalBase):
     """Whole script with a toy key; the download is a fake curl that copies a local file."""
 
     def setUp(self) -> None:
@@ -128,31 +128,29 @@ class AttachmentDryRun(tt.DryRun):
         (self.bin / "curl").chmod(0o755)
 
     def csv_text(self) -> str:
-        b = self.body()
-        return b.split("```text\n", 1)[1].rsplit("\n```", 1)[0] + "\n"
+        return self.csv()
 
     def run_att(self, data: bytes, body: str | None = None, fail: bool = False,
                 ) -> subprocess.CompletedProcess[str]:
         f = self.r / "dl.bin"
         f.write_bytes(data)
-        gh_body = self.r / "gh_body.md"
-        gh_body.unlink(missing_ok=True)
-        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.r),
-               "GNUPGHOME": self.gnupg(), "RUNNER_TEMP": str(self.rt),
-               "ISSUE_BODY": body if body is not None else f"### Submission CSV\n\n```text\n[sub.csv]({GOOD})\n```\n",
-               "SUBMITTER": "alice", "ISSUE_NUMBER": "7", "GITHUB_REPOSITORY": REPO,
-               "LEDGER_TOKEN": "tok-secret", "LEDGER_REPO": "o/l", "GH_TOKEN": "gh-secret",
-               "LEDGER_CLONE_URL": str(self.remote), "SEEKER_KEY_PASS": tt.PASS,
-               "GH_LOG": str(self.r / "gh.log"), "GH_BODY": str(gh_body),
-               "CURL_LOG": str(self.r / "curl.log"), "CURL_ENV_LOG": str(self.r / "curl.env"),
-               "CURL_FILE": str(f)}
+        self.extra_env = {"CURL_LOG": str(self.r / "curl.log"),
+                          "CURL_ENV_LOG": str(self.r / "curl.env"), "CURL_FILE": str(f),
+                          "SEEKER_KEY_PASS": "x-secret", "LEDGER_TOKEN": "x-secret"}
         if fail:
-            env["CURL_FAIL"] = "1"
-        return subprocess.run(["bash", str(tt.SH)], env=env, capture_output=True, text=True)
+            self.extra_env["CURL_FAIL"] = "1"
+        (self.r / "curl.env").write_text("", encoding="utf-8")
+        link_body = f"### Submission CSV\n\n```text\n[sub.csv]({GOOD})\n```\n"
+        return self.run_local("7", body=body if body is not None else link_body)
+
+    def ledger_lines(self) -> list[str]:
+        return self.remote_ledger()
 
     def reply(self) -> str:
         return (self.r / "gh_body.md").read_text()
 
+
+class AttachmentDryRun(AttachPlumbing):
     def test_attachment_scored_and_ledgered(self) -> None:
         text = self.csv_text()
         p = self.run_att(text.encode())
@@ -166,14 +164,12 @@ class AttachmentDryRun(tt.DryRun):
                      "--max-time 60", GOOD):
             self.assertIn(flag, args)
         self.assertNotIn("-H", args.split())  # no header, so no auth header
-        self.assertFalse((self.r / "curl.env").read_text().strip())  # no secret in curl env
 
     def test_body_route_unchanged_and_stamped(self) -> None:
-        b = self.body()
-        p = self.run_once(b)
+        p = self.run_local("7")
         self.assertEqual(p.returncode, 0, p.stderr)
         line = json.loads(self.ledger_lines()[0])
-        self.assertEqual(line["input"], "body")
+        self.assertEqual(line["input"], "issue")
         self.assertEqual(len(line["sha256"]), 64)
         self.assertFalse((self.r / "curl.log").exists())
 
@@ -196,8 +192,6 @@ class AttachmentDryRun(tt.DryRun):
         log = (self.r / "gh.log").read_text()
         self.assertIn("issue close 7", log)
         self.assertEqual(len(self.ledger_lines()), 0)
-        for s in (p.stdout, p.stderr, self.reply()):
-            self.assertNotIn(tt.PASS, s)
 
     def test_refusals(self) -> None:
         ok = self.csv_text().encode()
@@ -215,6 +209,7 @@ class AttachmentDryRun(tt.DryRun):
         }
         for name, (data, body, fail, msg) in cases.items():
             with self.subTest(name):
+                (self.r / "gh.log").unlink(missing_ok=True)
                 p = self.run_att(data, body, fail)
                 self.assert_refused_no_ledger(p, msg)
 
@@ -225,89 +220,48 @@ class AttachmentDryRun(tt.DryRun):
         self.assertEqual(len(self.ledger_lines()), 0)
 
 
-class FamilyDryRun(unittest.TestCase):
+class FamilyDryRun(AttachPlumbing):
     """A Comb family submission of all public circuits through the attachment path, toy key."""
 
+    n_bases = 20  # 20 x 300 = 6000 rows; big enough for a family bundle
+
+    def build_key(self, r: Path) -> tuple[Path, Path]:
+        kd, pub = r / "answer_key", r / "public"
+        kd.mkdir()
+        labels: dict[str, object] = {}
+        trojans: dict[str, object] = {}
+        k = 0
+        for b in range(self.n_bases):
+            (pub / f"B{b:02d}").mkdir(parents=True)
+            lines = []
+            for s in ("K4", "K6", "gates"):
+                ids = []
+                for i in range(100):
+                    cid = f"sc{k:05d}"
+                    k += 1
+                    ids.append(cid)
+                    labels[cid] = ["t"] if i < 35 else None
+                    if i < 35:
+                        trojans[cid] = [{}]
+                lines.append(f"{s}: " + " ".join(ids))
+            (pub / f"B{b:02d}" / "sets.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (kd / "labels.json").write_text(json.dumps(labels), encoding="utf-8")
+        (kd / "trojans.json").write_text(json.dumps(trojans), encoding="utf-8")
+        self.labels = sorted(labels)
+        return kd, pub
+
     def test_family_size(self) -> None:
-        if not tt.shutil.which("gpg"):
-            self.skipTest("gpg missing")
-        n_bases = 20  # 20 x 300 = 6000 rows; big enough for a family bundle
-        with tempfile.TemporaryDirectory() as td:
-            r = Path(td)
-            rng = random.Random(5)
-            kd, pub = r / "answer_key", r / "public"
-            kd.mkdir()
-            labels: dict[str, object] = {}
-            trojans: dict[str, object] = {}
-            k = 0
-            for b in range(n_bases):
-                (pub / f"B{b:02d}").mkdir(parents=True)
-                lines = []
-                for s in ("K4", "K6", "gates"):
-                    ids = []
-                    for i in range(100):
-                        cid = f"sc{k:05d}"
-                        k += 1
-                        ids.append(cid)
-                        labels[cid] = ["t"] if i < 35 else None
-                        if i < 35:
-                            trojans[cid] = [{}]
-                    lines.append(f"{s}: " + " ".join(ids))
-                (pub / f"B{b:02d}" / "sets.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-            (kd / "labels.json").write_text(json.dumps(labels), encoding="utf-8")
-            (kd / "trojans.json").write_text(json.dumps(trojans), encoding="utf-8")
-            arc = r / "plain.tar.gz"
-            tt.keypack.pack(kd, pub, tt.REL, "comb", arc)
-            ids = sorted(labels)
-            rows = "\n".join(f"{c},{int(rng.random() > 0.5)},{rng.random():.3f},," for c in ids)
-            text = ("# seeker-release: seeker-comb-v2.0\n# subset: Comb\n# detector: random\n"
-                    f"# team: t\nid,infected,score,count,locations\n{rows}\n")
-            self.assertGreater(len(text), 65536)  # does not fit an issue body
-            # reuse DryRun plumbing: build its remote/bin with this key
-            t = AttachmentDryRun("test_attachment_scored_and_ledgered")
-            t.td = tempfile.TemporaryDirectory()
-            try:
-                t.r = Path(t.td.name)
-                shutil_copy(arc, t.r / "plain.tar.gz")
-                _setup_remote(t)
-                p = t.run_att(text.encode())
-                self.assertEqual(p.returncode, 0, p.stderr)
-                self.assertIn("Seeker scoring report", t.reply())
-                line = json.loads(t.ledger_lines()[0])
-                self.assertEqual((line["unit"], line["input"], line["n"]), ("family", "attachment", len(ids)))
-            finally:
-                t.td.cleanup()
-
-
-def shutil_copy(a: Path, b: Path) -> None:
-    b.write_bytes(a.read_bytes())
-
-
-def _setup_remote(t: AttachmentDryRun) -> None:
-    r = t.r
-    t.remote = r / "remote.git"
-    seed = r / "seed"
-    for cmd in (["git", "init", "-q", "--bare", str(t.remote)],
-                ["git", "clone", "-q", str(t.remote), str(seed)]):
-        subprocess.run(cmd, check=True, capture_output=True)
-    (seed / "keys").mkdir()
-    subprocess.run(
-        ["gpg", "--batch", "--quiet", "--pinentry-mode", "loopback", "--passphrase-fd", "0",
-         "--symmetric", "--cipher-algo", "AES256", "--output",
-         str(seed / "keys" / f"{tt.REL}-key.tar.gz.gpg"), str(r / "plain.tar.gz")],
-        input=tt.PASS + "\n", text=True, check=True, capture_output=True,
-        env={**os.environ, "GNUPGHOME": t.gnupg()})
-    (seed / "ledger.jsonl").write_text("", encoding="utf-8")
-    for cmd in (["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "i"],
-                ["push", "-q", "origin", "HEAD"]):
-        subprocess.run(["git", "-C", str(seed), *cmd], check=True, capture_output=True)
-    t.bin = r / "bin"
-    t.bin.mkdir()
-    for name, body in (("gh", tt.FAKE_GH), ("curl", FAKE_CURL)):
-        (t.bin / name).write_text(body, encoding="utf-8")
-        (t.bin / name).chmod(0o755)
-    t.rt = r / "runner"
-    t.rt.mkdir()
+        rng = random.Random(5)
+        rows = "\n".join(f"{c},{int(rng.random() > 0.5)},{rng.random():.3f},," for c in self.labels)
+        text = ("# seeker-release: seeker-comb-v2.0\n# subset: Comb\n# detector: random\n"
+                f"# team: t\nid,infected,score,count,locations\n{rows}\n")
+        self.assertGreater(len(text), 65536)  # does not fit an issue body
+        p = self.run_att(text.encode())
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("Seeker scoring report", self.reply())
+        line = json.loads(self.ledger_lines()[0])
+        self.assertEqual((line["unit"], line["input"], line["n"]),
+                         ("family", "attachment", len(self.labels)))
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ import json
 import os
 import random
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,8 +18,7 @@ sys.path.insert(0, str(ROOT))
 from lemanruss.score import keypack  # noqa: E402
 
 WF = ROOT / ".github/workflows/score.yml"
-SH = ROOT / "scripts/score.sh"
-PASS = "toy-pass-phrase"
+SH = ROOT / "scripts/score-local.sh"
 REL = "seeker-comb-v2.0"
 
 
@@ -33,7 +31,7 @@ class WorkflowStatic(unittest.TestCase):
         except ImportError:
             self.skipTest("PyYAML not installed")
         doc = yaml.safe_load(self.text)
-        self.assertIn("score", doc["jobs"])
+        self.assertIn("stage", doc["jobs"])
         self.assertEqual(doc[True]["issues"]["types"], ["opened"])  # YAML reads `on` as True
 
     def test_no_expression_in_run_blocks(self) -> None:
@@ -58,29 +56,31 @@ class WorkflowStatic(unittest.TestCase):
         both = "\n".join(ln for ln in (self.text + SH.read_text(encoding="utf-8")).splitlines()
                          if not ln.lstrip().startswith("#"))
         for bad in ("pull_request_target", "|| true", "set -x", "set -o xtrace", "ref:",
-                    "upload-artifact", "workflow_run"):
+                    "upload-artifact", "workflow_run", "actions/checkout"):
             self.assertNotIn(bad, both, bad)
 
-    def test_minimal_permissions_and_disabled(self) -> None:
+    def test_minimal_permissions_and_label_gate(self) -> None:
         m = re.search(r"^permissions:\n((?:  .*\n)+)", self.text, re.M)
         assert m
         perms = dict(x.strip().split(": ") for x in m.group(1).splitlines())
         self.assertEqual(perms, {"issues": "write", "contents": "read"})
         self.assertRegex(self.text,
                          r"(?m)^    if: contains\(github\.event\.issue\.labels\.\*\.name, 'score-request'\)$")
-        self.assertIn("group: score-ledger", self.text)
 
-    def test_secret_only_via_env_and_gpg_stdin(self) -> None:
-        sh = SH.read_text(encoding="utf-8")
-        self.assertIn("--passphrase-fd 0", sh)
-        self.assertIn("--pinentry-mode loopback", sh)
-        self.assertIn("--batch", sh)
-        self.assertNotIn("--passphrase ", sh)
-        self.assertIsNone(re.search(r"echo[^\n]*SEEKER_KEY_PASS", sh))
-        for ln in sh.splitlines():
-            if "SEEKER_KEY_PASS" in ln:
-                self.assertTrue(ln.lstrip().startswith(("printf '%s\\n' \"$SEEKER_KEY_PASS\"",
-                                                        "#", "env -u")), ln)
+    def test_workflow_only_stages(self) -> None:
+        # no scoring, no key, no ledger, no issue body, no close in Actions
+        code = "\n".join(ln for ln in self.text.splitlines() if not ln.lstrip().startswith("#"))
+        for bad in ("secrets.", "SEEKER_KEY_PASS", "LEDGER", "issue.body", "gpg", "lemanruss",
+                    "score.sh", "issue close", "issue lock"):
+            self.assertNotIn(bad, code, bad)
+        self.assertIn("--add-label staged", code)
+        self.assertIn("label create staged", code)
+        self.assertIn("staged for the maintainer", code)
+
+    def test_issue_form_says_hand_scored(self) -> None:
+        form = (ROOT / ".github/ISSUE_TEMPLATE/score-request.yml").read_text(encoding="utf-8")
+        self.assertIn("by hand", form)
+        self.assertIn("jamieson dit peter at gmail dit com", form)
 
 
 def make_key(root: Path) -> tuple[Path, Path]:
@@ -112,6 +112,13 @@ def make_key(root: Path) -> tuple[Path, Path]:
 
 FAKE_GH = """#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
+if [ "$1 $2" = "issue view" ]; then
+  case "$*" in
+    *author*) if [[ "$*" == *login* ]]; then echo alice; else cat "$GH_ISSUE_BODY"; fi ;;
+    *) cat "$GH_ISSUE_BODY" ;;
+  esac
+  exit 0
+fi
 while [ $# -gt 0 ]; do
   if [ "$1" = "--body-file" ]; then cp "$2" "$GH_BODY"; fi
   shift
@@ -119,148 +126,165 @@ done
 """
 
 
-class DryRun(unittest.TestCase):
+class LocalBase(unittest.TestCase):
+    """Plumbing only (toy key, ledger remote, fake gh); no tests here."""
+
+
+    extra_env: dict[str, str] = {}
+
+    def build_key(self, r: Path) -> tuple[Path, Path]:
+        return make_key(r)
+
     def setUp(self) -> None:
-        if not shutil.which("gpg"):
-            self.skipTest("gpg missing")
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)
         r = Path(self.td.name)
         self.r = r
-        kd, pub = make_key(r)
-        arc = r / "plain.tar.gz"
-        keypack.pack(kd, pub, REL, "comb", arc)
-        # toy ledger remote (bare) with the encrypted key and an empty ledger
+        kd, pub = self.build_key(r)
+        self.keys = r / "keys"
+        self.keys.mkdir()
+        keypack.pack(kd, pub, REL, "comb", self.keys / f"{REL}-key.tar.gz")
         self.remote = r / "remote.git"
         seed = r / "seed"
         for cmd in (["git", "init", "-q", "--bare", str(self.remote)],
                     ["git", "clone", "-q", str(self.remote), str(seed)]):
             subprocess.run(cmd, check=True, capture_output=True)
-        (seed / "keys").mkdir()
-        subprocess.run(
-            ["gpg", "--batch", "--quiet", "--pinentry-mode", "loopback", "--passphrase-fd", "0",
-             "--symmetric", "--cipher-algo", "AES256", "--output",
-             str(seed / "keys" / f"{REL}-key.tar.gz.gpg"), str(arc)],
-            input=PASS + "\n", text=True, check=True, capture_output=True,
-            env={**os.environ, "GNUPGHOME": self.gnupg()})
         (seed / "ledger.jsonl").write_text("", encoding="utf-8")
-        for cmd in (["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "i"],
+        for cmd in (["add", "-A"],
+                    ["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "i"],
                     ["push", "-q", "origin", "HEAD"]):
             subprocess.run(["git", "-C", str(seed), *cmd], check=True, capture_output=True)
+        self.ledger = r / "ledger"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.ledger)], check=True,
+                       capture_output=True)
+        for k, v in (("user.name", "t"), ("user.email", "t@x")):
+            subprocess.run(["git", "-C", str(self.ledger), "config", k, v], check=True)
         self.bin = r / "bin"
         self.bin.mkdir()
         (self.bin / "gh").write_text(FAKE_GH, encoding="utf-8")
         (self.bin / "gh").chmod(0o755)
-        self.rt = r / "runner"
-        self.rt.mkdir()
-        self.ids = sorted(json.loads((kd / "labels.json").read_text()))[:100]
+        self.unp = r / "unp"
+        keypack.unpack(self.keys / f"{REL}-key.tar.gz", self.unp)
 
-    def gnupg(self) -> str:
-        d = self.r / "gnupg"
-        d.mkdir(mode=0o700, exist_ok=True)
-        return str(d)
-
-    def body(self, unit: str = "C432-K4", release: str = REL) -> str:
+    def csv(self, unit: str = "C432-K4", release: str = REL) -> str:
         sub = json.loads(
             subprocess.run(
                 [sys.executable, "-c",
                  "import json,sys;from pathlib import Path;"
                  "from lemanruss.score.subsets import load_subsets;"
                  "print(json.dumps(load_subsets(Path(sys.argv[1]))[1][sys.argv[2]]))",
-                 str(self.unpacked() / "subsets.json"), unit],
+                 str(self.unp / f"{REL}-key" / "subsets.json"), unit],
                 capture_output=True, text=True, check=True, cwd=ROOT,
                 env={**os.environ, "PYTHONPATH": str(ROOT)}).stdout)
         rows = "\n".join(f"{c},{i % 2},{(i * 7 % 10) / 10},," for i, c in enumerate(sub))
-        return ("### Submission CSV\n\n```text\n"
-                f"# seeker-release: {release}\n# subset: {unit}\n# detector: d\n# team: t\n"
-                f"id,infected,score,count,locations\n{rows}\n```\n")
+        return (f"# seeker-release: {release}\n# subset: {unit}\n# detector: d\n# team: t\n"
+                f"id,infected,score,count,locations\n{rows}\n")
 
-    def unpacked(self) -> Path:
-        d = self.r / "unp"
-        if not d.exists():
-            keypack.unpack(self.r / "plain.tar.gz", d)
-        return d / f"{REL}-key"
+    def body(self, **kw: str) -> str:
+        return f"### Submission CSV\n\n```text\n{self.csv(**kw)}```\n"
 
-    def run_once(self, body: str, remote: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run_local(self, *args: str, body: str | None = None) -> subprocess.CompletedProcess[str]:
         gh_body = self.r / "gh_body.md"
         gh_body.unlink(missing_ok=True)
+        issue_body = self.r / "issue_body.md"
+        issue_body.write_text(body if body is not None else self.body(), encoding="utf-8")
         env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.r),
-               "GNUPGHOME": self.gnupg(), "RUNNER_TEMP": str(self.rt),
-               "ISSUE_BODY": body, "SUBMITTER": "alice", "ISSUE_NUMBER": "7",
-               "GITHUB_REPOSITORY": "o/r", "LEDGER_TOKEN": "x", "LEDGER_REPO": "o/l",
-               "LEDGER_CLONE_URL": str(remote or self.remote), "SEEKER_KEY_PASS": PASS,
-               "GH_LOG": str(self.r / "gh.log"), "GH_BODY": str(gh_body)}
-        return subprocess.run(["bash", str(SH)], env=env, capture_output=True, text=True)
+               "KEYS_DIR": str(self.keys), "LEDGER_DIR": str(self.ledger),
+               "SEEKER_REPO": "o/r", "EMAIL_OUT_DIR": str(self.r / "email"),
+               "GH_LOG": str(self.r / "gh.log"), "GH_BODY": str(gh_body),
+               "GH_ISSUE_BODY": str(issue_body), **self.extra_env}
+        return subprocess.run(["bash", str(SH), *args], env=env, capture_output=True, text=True)
 
-    def ledger_lines(self) -> list[str]:
+    def remote_ledger(self) -> list[str]:
         out = subprocess.run(["git", "-C", str(self.remote), "show", "HEAD:ledger.jsonl"],
                              capture_output=True, text=True, check=True).stdout
         return out.splitlines()
 
-    def test_report_ledger_and_quota(self) -> None:
-        p = self.run_once(self.body())
+
+class LocalScoring(LocalBase):
+    def test_issue_report_ledger_and_quota(self) -> None:
+        p = self.run_local("7")
         self.assertEqual(p.returncode, 0, p.stderr)
         report = (self.r / "gh_body.md").read_text()
         self.assertIn("Seeker scoring report", report)
-        lines = self.ledger_lines()
+        lines = self.remote_ledger()
         self.assertEqual(len(lines), 1)
-        self.assertEqual(json.loads(lines[0])["unit"], "cell")
+        entry = json.loads(lines[0])
+        self.assertEqual(entry["unit"], "cell")
+        self.assertEqual(entry["input"], "issue")
+        self.assertEqual(entry["submitter"], "alice")
+        self.assertEqual(len(entry["sha256"]), 64)
         log = (self.r / "gh.log").read_text()
-        for verb in ("issue comment 7", "issue close 7", "issue lock 7"):
+        for verb in ("issue comment 7", "issue edit 7 --remove-label staged", "issue close 7",
+                     "issue lock 7"):
             self.assertIn(verb, log)
-        for s in (p.stdout, p.stderr, report, lines[0]):
-            self.assertNotIn(PASS, s)
-        self.assertFalse((self.rt / "seeker" / "key").exists())  # cleaned up
         # second call inside 24 h: refused with the retry message, ledger unchanged
-        p2 = self.run_once(self.body("C432-K6"))
+        (self.r / "gh.log").unlink()
+        p2 = self.run_local("8", body=self.body(unit="C432-K6"))
         self.assertEqual(p2.returncode, 0, p2.stderr)
         self.assertIn("retry in", (self.r / "gh_body.md").read_text())
-        self.assertEqual(len(self.ledger_lines()), 1)
-        self.assertNotIn("jamieson dit peter", (self.r / "gh_body.md").read_text())
+        self.assertEqual(len(self.remote_ledger()), 1)
+
+    def test_dry_run_changes_nothing(self) -> None:
+        p = self.run_local("7", "--dry-run")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("Seeker scoring report", p.stdout)
+        self.assertEqual(self.remote_ledger(), [])
+        self.assertEqual((self.ledger / "ledger.jsonl").read_text(), "")
+        log = (self.r / "gh.log").read_text()
+        for verb in ("issue comment", "issue edit", "issue close", "issue lock"):
+            self.assertNotIn(verb, log)
+
+    def test_email_csv_report_file_and_stamp(self) -> None:
+        f = self.r / "mail.csv"
+        f.write_text(self.csv(), encoding="utf-8")
+        p = self.run_local(str(f), "--submitter", "email:a@b.c")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        entry = json.loads(self.remote_ledger()[0])
+        self.assertEqual((entry["input"], entry["submitter"]), ("email", "email:a@b.c"))
+        reports = list((self.r / "email" / "reports").glob("*-report.md"))
+        self.assertEqual(len(reports), 1)
+        self.assertIn("Seeker scoring report", reports[0].read_text())
+        self.assertNotIn("issue", (self.r / "gh.log").read_text() if (self.r / "gh.log").exists() else "")
+
+    def test_email_needs_submitter(self) -> None:
+        f = self.r / "mail.csv"
+        f.write_text(self.csv(), encoding="utf-8")
+        self.assertNotEqual(self.run_local(str(f)).returncode, 0)
 
     def test_quota_used_up_points_to_email(self) -> None:
-        work = self.r / "fill"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(work)], check=True,
-                       capture_output=True)
         old = [json.dumps({"t": 0.0, "submitter": "alice", "release": REL, "unit": "cell",
                            "benchmark": f"B{i}"}) for i in range(10)]
-        (work / "ledger.jsonl").write_text("\n".join(old) + "\n", encoding="utf-8")
-        for cmd in (["add", "ledger.jsonl"],
-                    ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "fill"],
+        (self.ledger / "ledger.jsonl").write_text("\n".join(old) + "\n", encoding="utf-8")
+        for cmd in (["add", "ledger.jsonl"], ["commit", "-q", "-m", "fill"],
                     ["push", "-q", "origin", "HEAD"]):
-            subprocess.run(["git", "-C", str(work), *cmd], check=True, capture_output=True)
-        p = self.run_once(self.body())
+            subprocess.run(["git", "-C", str(self.ledger), *cmd], check=True, capture_output=True)
+        p = self.run_local("7")
         self.assertEqual(p.returncode, 0, p.stderr)
         text = (self.r / "gh_body.md").read_text()
         self.assertIn("REFUSED: limit reached", text)
         self.assertIn("jamieson dit peter at gmail dit com", text)
-        self.assertEqual(len(self.ledger_lines()), 10)
+        self.assertEqual(len(self.remote_ledger()), 10)
 
     def test_unknown_release_refused_without_key(self) -> None:
-        p = self.run_once(self.body(release="seeker-evil-v9"))
+        p = self.run_local("7", body=self.body(release="seeker-evil-v9"))
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("unknown", (self.r / "gh_body.md").read_text())
-        self.assertEqual(len(self.ledger_lines()), 0)
+        self.assertEqual(self.remote_ledger(), [])
 
-    def test_ledger_push_failure_fails_the_run(self) -> None:
+    def test_ledger_push_failure_releases_no_report(self) -> None:
         hook = self.remote / "hooks" / "pre-receive"
         hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         hook.chmod(0o755)
-        p = self.run_once(self.body())
+        p = self.run_local("7")
         self.assertNotEqual(p.returncode, 0)
         self.assertFalse((self.r / "gh_body.md").exists())  # no report released
         self.assertIn("ledger push failed", p.stderr)
 
-    def test_wrong_passphrase_fails(self) -> None:
-        p = subprocess.run(["bash", str(SH)], capture_output=True, text=True, env={
-            "PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": str(self.r),
-            "GNUPGHOME": self.gnupg(), "RUNNER_TEMP": str(self.rt),
-            "ISSUE_BODY": self.body(), "SUBMITTER": "a", "ISSUE_NUMBER": "1",
-            "GITHUB_REPOSITORY": "o/r", "LEDGER_TOKEN": "x", "LEDGER_REPO": "o/l",
-            "LEDGER_CLONE_URL": str(self.remote), "SEEKER_KEY_PASS": "wrong",
-            "GH_LOG": str(self.r / "gh.log"), "GH_BODY": str(self.r / "b.md")})
-        self.assertNotEqual(p.returncode, 0)
-        self.assertNotIn("wrong", p.stdout + p.stderr)
+    def test_no_passphrase_use(self) -> None:
+        sh = SH.read_text(encoding="utf-8")
+        for bad in ("SEEKER_KEY_PASS", "seeker-pass", "gpg", "--passphrase"):
+            self.assertNotIn(bad, sh)
 
 
 if __name__ == "__main__":
