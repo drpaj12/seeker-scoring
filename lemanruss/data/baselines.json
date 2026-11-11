@@ -1,31 +1,51 @@
 {
- "seeker-comb-v2.0-rc4": {
+ "seeker-comb-v2.0": {
   "size-only": {
-   "all": 0.5382,
-   "G": 0.4826,
-   "K4": 0.4721,
-   "K6": 0.5442
+   "all": 0.5925,
+   "G": 0.5329,
+   "K4": 0.5838,
+   "K6": 0.6116,
+   "silicon": 0.5823
   },
   "sanity": {
-   "all": 0.5217,
-   "G": 0.5484,
-   "K4": 0.5077,
-   "K6": 0.4993
+   "all": 0.5067,
+   "G": 0.491,
+   "K4": 0.4948,
+   "K6": 0.5488,
+   "silicon": 0.5046
   }
  },
- "seeker-seq-v2.0-rc5": {
+ "seeker-seq-v2.0": {
   "size-only": {
-   "all": 0.626,
-   "G": 0.6671,
-   "K4": 0.6474,
-   "K6": 0.6155
+   "all": 0.6117,
+   "G": 0.5813,
+   "K4": 0.6508,
+   "K6": 0.6687,
+   "silicon": 0.6486
   },
   "sanity": {
-   "all": 0.5098,
-   "G": 0.4881,
-   "K4": 0.5083,
-   "K6": 0.4951
+   "all": 0.5091,
+   "G": 0.5186,
+   "K4": 0.4879,
+   "K6": 0.5074,
+   "silicon": 0.5167
   }
  },
- "_note": "Aggregate AUROC over the full release (5 folds, seed 0), detector lane outputs; no per-circuit data."
+ "seeker-proc-v2.0": {
+  "size-only": {
+   "all": 0.4936,
+   "G": 0.505,
+   "K4": 0.6063,
+   "K6": 0.3999,
+   "silicon": 0.4632
+  },
+  "sanity": {
+   "all": 0.5356,
+   "G": 0.5273,
+   "K4": 0.6275,
+   "K6": 0.4405,
+   "silicon": 0.547
+  }
+ },
+ "_note": "Aggregate AUROC over the full release (5 folds, seed 0), from docs/results-v2-full-summary.json (paper v6 full-set run); no per-circuit data. Sets: all, G (gates), K4, K6, silicon (S)."
 }

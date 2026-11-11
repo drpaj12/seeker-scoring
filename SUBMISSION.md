@@ -20,7 +20,9 @@ Each benchmark package also holds a neutral stimulus that no Trojan reacts to.
 ## Where to submit
 
 Open an issue with the form `score-request` in https://github.com/drpaj12/seeker-scoring and paste the CSV, or
-drag the CSV file into the box (see "Large submissions"). The report comes back as a comment and the issue closes. Downloads:
+drag the CSV file into the box (see "Large submissions"). The issue is a request: an automatic reply says it is staged, and the
+maintainer scores it by hand with the same scorer and key, usually within a few days. The report is then posted as a comment and the
+issue closes. You can also email the CSV (see "Limits"). Downloads:
 https://github.com/drpaj12/lemanrussIII/releases/tag/seeker-v2.0
 
 ### Large submissions: attach the file
@@ -31,8 +33,8 @@ Drag a `.csv` or `.txt` file into the form box instead. The file holds exactly w
 `https://github.com/user-attachments/files/<digits>/<name>`. Rules: exactly one attachment; type `.csv` or
 `.txt`; UTF-8 text without NUL bytes; at most 8 MB (the scorer also refuses a file over 5 MiB). If the box also
 holds a pasted CSV, the pasted CSV is used. A second attachment, a link that is not a GitHub issue attachment,
-a file of the wrong type or size, or a failed download is refused with the reason; the issue closes and no quota
-is used. The attachment is downloaded without any credential.
+a file of the wrong type or size, or a failed download is refused with the reason when the maintainer scores the request;
+the issue closes and no quota is used. The attachment is downloaded without any credential, on the maintainer's machine.
 
 ## File format
 
@@ -79,5 +81,5 @@ One scored submission per 24 hours, 10 in total, 3 per benchmark and 3 family bu
 submission does not count. The quota exists so that the key cannot be recovered by repeated
 queries; the threat model and numbers are in the spec.
 
-Quota used up: email the CSV to jamieson dit peter at gmail dit com (the maintainer). It is scored by hand with the same scorer
-and key, one line goes into the same ledger (input `email`), and the report comes back by email.
+Quota used up, or you prefer not to use GitHub: email the CSV to jamieson dit peter at gmail dit com (the maintainer). Issues are scored
+by hand as well, with the same scorer, key and ledger; an emailed CSV is scored the same way, one line goes into the same ledger (input `email`), and the report comes back by email.

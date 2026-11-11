@@ -1,8 +1,8 @@
-# Seeker v2.0 scorer. DISABLED until the maintainer enables it (see README "Enabling").
+# Seeker v2.0 request staging. The workflow does NOT score: it acknowledges the request and adds
+# the `staged` label; the maintainer scores by hand (scripts/score-local.sh) and closes the issue.
 # Safety rules: trigger is `issues: opened` only; never pull_request_target; nothing from the
-# issue or a PR is checked out; the issue body reaches the scorer only through an environment
-# variable; secrets are passed through env, never interpolated into a shell line.
-name: score
+# issue or a PR is checked out or executed; the issue body is never read by this workflow.
+name: stage
 on:
   issues:
     types: [opened]
@@ -12,26 +12,26 @@ permissions:
   contents: read
 
 concurrency:
-  group: score-ledger  # the ledger has one writer at a time
+  group: stage-requests
   cancel-in-progress: false
 
 jobs:
-  score:
+  stage:
     if: contains(github.event.issue.labels.*.name, 'score-request')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Score the submission
+      - name: Acknowledge and label
         env:
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          SUBMITTER: ${{ github.event.issue.user.login }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
-          LEDGER_TOKEN: ${{ secrets.LEDGER_TOKEN }}
-          LEDGER_REPO: ${{ secrets.LEDGER_REPO }}
-          SEEKER_KEY_PASS: ${{ secrets.SEEKER_KEY_PASS }}
-        run: bash scripts/score.sh
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh label create staged --force --color FBCA04 \
+            --description "Request received, waiting for the maintainer to score it by hand"
+          gh issue comment "$ISSUE_NUMBER" --body-file - <<'MSG'
+          Request received, staged for the maintainer. Requests are scored by hand, usually within a few days.
+          The report is posted here and the issue is then closed. Nothing is scored automatically.
+          MSG
+          gh issue edit "$ISSUE_NUMBER" --add-label staged
